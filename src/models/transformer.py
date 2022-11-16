@@ -4,6 +4,7 @@ import torch
 from torch import Tensor, LongTensor
 import torch.nn as nn
 from torch.nn import TransformerEncoderLayer, TransformerEncoder
+from src.utils import FileIO
 
 
 class PositionalEncoding1D(nn.Module):
@@ -53,29 +54,33 @@ class TimeFormer(nn.Module):
     def __init__(self,
                  input_size: int,
                  emb_size: int,
+                 dim_feedforward: int,
                  n_att_heads: int,
                  depth: int,
                  dropout: float,
                  max_seq_len: int,
                  out_size: int) -> None:
         super(TimeFormer, self).__init__()
+        assert emb_size % 2 == 0
         # Model params.
         self.input_size = input_size
         self.emb_size = emb_size
+        self.dim_feedforward = dim_feedforward
         self.n_att_heads = n_att_heads
         self.depth = depth
         self.dropout = dropout
         self.max_seq_len = max_seq_len
         self.out_size = out_size
+        self.cached_mask = None
         # Learnable modules.
         self.f = nn.GELU()
         self.drop = nn.Dropout(dropout, inplace=False)
-        self.inp = nn.Linear(input_size, emb_size)
+        self.inp = nn.Linear(input_size, emb_size // 2)
         self.transblock = TransformerEncoderLayer(
             d_model=emb_size,
             nhead=n_att_heads,
             dropout=dropout,
-            dim_feedforward=128,
+            dim_feedforward=dim_feedforward,
             batch_first=True,
             activation='gelu'
         )
@@ -97,10 +102,10 @@ class TimeFormer(nn.Module):
         # tokens in the time-series
         seq_len = input_seq.shape[1]
         diag_mask = self._generate_triangle_mask(seq_len)  # ATTENTION: 1 means the token WILL be masked, 0 means it WILL NOT.
-        h = self.drop(self.f(self.inp(input_seq)))  # Create initial embeddigs.
-        h = h + self.pe(h)  # Add positional embeddings.
+        h = self.f(self.inp(input_seq)) # Create initial embeddigs.
+        h = torch.cat((h, self.pe(h)), dim=-1)  # Add positional embeddings.
+        # h = h + self.pe(h)
         h = self.encoder(h, diag_mask)  # Run transformer encoder.
-        h = self.drop(h)
         return self.out(h)
 
     def _generate_triangle_mask(self, sz: int) -> Tensor:
@@ -109,5 +114,16 @@ class TimeFormer(nn.Module):
         :return: 2d triangle tensor with -inf on the upper triangle and 0 on the diag and 
         lower triangle
         """
-        mask = torch.triu(torch.ones(sz, sz), diagonal=1)
-        return mask.masked_fill(mask == 1, float('-inf'))
+        if self.cached_mask is None:
+            mask = torch.triu(torch.ones(sz, sz), diagonal=1)
+            self.cached_mask = mask.masked_fill(mask == 1, float('-inf'))
+        return self.cached_mask
+
+    def save(self, dirname: str) -> None:
+        torch.save(self, f'{dirname}/model.pth')
+
+    @classmethod
+    def load(cls, dirname: str) -> None:
+        model = torch.load(f'{dirname}/model.pth')
+        model.eval()
+        return model

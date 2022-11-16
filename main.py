@@ -1,29 +1,31 @@
-from os.path import abspath, dirname
+import logging
+from clidantic import Parser
 from torch.utils.tensorboard import SummaryWriter
 import torch
 from src.utils import seed_everything, prepare_savedir, FileIO
-from src.data import ElectricProdDataset, DailyTemp
+from src.data import ElectricProdDataset
 from src.modelling import ExampleGenerator, SupervisedTrainer
 from src.models.transformer import TimeFormer
 from src.visuals import DisplayPreds
 from src.config.mainconf import Config
 
 
-conf = Config()
-savedir = prepare_savedir(conf)
- # Laod data.
-train, dev, test = DailyTemp.load(
-    conf.datasets.daily_temperatures, train_perc=0.7, dev_perc=0.1
-)
-train_examples = ExampleGenerator.sample_seqs(train, 1000, conf.model.max_seq_len)
-dev_examples = ExampleGenerator.sample_seqs(dev, 200, conf.model.max_seq_len)
-test_examples = ExampleGenerator.sample_seqs(test, 400, conf.model.max_seq_len)
+logger = logging.getLogger('timeformer')
+cli = Parser()
 
-
-TRAIN = True
-if TRAIN:
+@cli.command()
+def train(conf: Config):
+    # Init stuff.
     seed_everything(conf.seed)
+    savedir = prepare_savedir(conf)
     tb_logger = SummaryWriter(log_dir=f'{savedir}/tb-logs', comment="000")
+
+    # Laod data.
+    train, dev, _ = ElectricProdDataset.load(
+        conf.datasets.electricity_production, train_perc=0.7, dev_perc=0.1
+    )
+    train_examples = ExampleGenerator.sample_seqs(train, 300, conf.model.max_seq_len)
+    dev_examples = ExampleGenerator.sample_seqs(dev, 50, conf.model.max_seq_len)
 
     # Model.
     model = TimeFormer(
@@ -49,23 +51,34 @@ if TRAIN:
         tb_logger=tb_logger
     )
 
-    # # Save.
-    # FileIO.write_json(conf.dict(), f'{savedir}/config.json')
-    # model.save(savedir)
+    # Save.
+    FileIO.write_json(conf.dict(), f'{savedir}/config.json')
+    model.save(savedir)
 
-TEST = True
-if TEST:
-    # # Load model.
-    # model1 = TimeFormer.load(savedir)
-    # configs = FileIO.read_json(f'{savedir}/config.json')
+
+@cli.command()
+def test(conf: Config):
+    # Load data.
+    _, _, test = ElectricProdDataset.load(
+        conf.datasets.electricity_production, train_perc=0.7, dev_perc=0.1
+    )
+    test_examples = ExampleGenerator.sample_seqs(test, 100, conf.model.max_seq_len)
+
+    # Load model.
+    savedir = prepare_savedir(conf)
+    model = TimeFormer.load(savedir)
+
     # Test.
     trainer = SupervisedTrainer()
+    loss_test = trainer.evaluation(model, test_examples)
+    logger.info(f'Loss test: {loss_test}')
 
     # Plot predicitons for one example.
     ex = test_examples[0]
     with torch.no_grad():
         inps = ex.input_seq.unsqueeze(-1).unsqueeze(0)
         preds = model(inps.to(conf.device))
-    DisplayPreds.plot(
-        inps.squeeze().tolist(), preds.squeeze().tolist(), ex.target_seq.tolist()
-    )
+    DisplayPreds.plot(preds.squeeze().tolist(), ex.target_seq.tolist())
+
+if __name__ == "__main__":
+    cli()

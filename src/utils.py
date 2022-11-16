@@ -1,11 +1,12 @@
 from typing import Dict, List
+import os
 import json
 import openpyxl
 import csv
 import numpy as np
 import torch
 import random
-
+from src.config.mainconf import Config
 
 
 class FileIO:
@@ -67,3 +68,13 @@ def seed_everything(seed: int, deterministic: bool = True) -> None:
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = False
+
+def prepare_savedir(config: Config):
+    name = 'emb{}-ff{}-nhead{}-depth{}-seqlen{}-batch{}'.format(
+        config.model.emb_size, config.model.dim_feedforward, config.model.n_att_heads,
+        config.model.depth, config.model.max_seq_len, config.training.batch_size
+    )
+    savedir = f'{config.outputs_folder}/{name}'
+    if not os.path.exists(savedir):
+        os.makedirs(savedir)
+    return savedir

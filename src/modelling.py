@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 from torch.nn import MSELoss
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim.lr_scheduler import ExponentialLR, ReduceLROnPlateau
 from torch.utils import tensorboard
 from src.models.transformer import TimeFormer 
 from src.config.training import TrainConfig
@@ -54,7 +54,7 @@ class Batcher:
 
 
 class SupervisedTrainer:
-    def __init__(self, patience: int, delta: float, device: str) -> None:
+    def __init__(self, patience: int = 5, delta: float = 0, device: str = 'cpu') -> None:
         super(SupervisedTrainer, self).__init__()
         self.patience = patience
         self.delta = delta
@@ -63,6 +63,7 @@ class SupervisedTrainer:
         self.best_model = None
         self.train_msg = "Epoch: %d | Train L: %.3f | Valid  L: %.3f"
         self.device = device
+        self.criterion = MSELoss()
 
     def train(self,
               model: TimeFormer,
@@ -78,8 +79,7 @@ class SupervisedTrainer:
         self.best_model = model
 
         optimizer = AdamW(model.parameters(), lr=lr)
-        scheduler = ExponentialLR(optimizer, gamma=0.9)
-        self.criterion = MSELoss()
+        scheduler = ReduceLROnPlateau(optimizer, verbose=True)
 
         self.best_model = self.best_model.to(self.device)
         # Actual training.
@@ -92,17 +92,19 @@ class SupervisedTrainer:
 
                 optimizer.zero_grad()
                 preds = model(inp_seq)
-                loss = torch.sqrt(self.criterion(targ_seq, preds))
+                loss = torch.sqrt(self.criterion(preds, targ_seq))
                 rmse_train += loss.item()
                 if epoch > 0:  # First epoch keep untrained model for baseline performance.
                     loss.backward()
                     optimizer.step()
                 n += 1
-            
-            rmse_train /= n
 
+            rmse_train /= n
             tb_logger.add_scalar('Loss/train', rmse_train, epoch)
             rmse_eval = self.evaluation(model, data_valid)
+
+            if epoch > 0:
+                scheduler.step(rmse_eval)
 
             # Log into tensorboard the evaluation results and print.
             tb_logger.add_scalar('Loss/eval', rmse_eval, epoch)

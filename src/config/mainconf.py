@@ -9,6 +9,7 @@ class Config(BaseSettings):
     seed: int = Field(1337, description="Random seed for deterministic runs")
     name: str = Field("Timeformer", description="Name of the experiment")
     outputs_folder: str = Field("outputs", description="Path to the folder to store outputs if any")
+    model_saves: str = Field('model_saves', description='model weights and configuration are saved in this folder')
     device: str = Field("cuda" if cuda.is_available() else "cpu", description="Device to use for training")
 
     datasets: DatasetsConfig = DatasetsConfig()
