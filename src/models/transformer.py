@@ -7,7 +7,30 @@ from torch.nn import TransformerEncoderLayer, TransformerEncoder
 from src.utils import FileIO
 
 
+class PositionalEncodingNaive(nn.Module):
+    """Simply add the position in the sequence."""
+    def __init__(self) -> None:
+        super(PositionalEncodingNaive, self).__init__()
+        self.size = 1
+        self.pos_emb = None
+    
+    def forward(self, inputs: Tensor):
+        if len(inputs.shape) != 3:
+            raise RuntimeError("The input tensor has to be 3d!")
+
+        batch_size, seq_len, emb_size = inputs.shape
+
+        if self.pos_emb is None:
+            pos = torch.arange(seq_len, device=inputs.device)
+            self.pos_emb = pos[None, :].unsqueeze(-1)
+
+        return self.pos_emb.repeat(batch_size, 1, 1)
+
+
+
 class PositionalEncoding1D(nn.Module):
+    """Sinusoidal positional embeddings as described by the 
+    All You Need is Attention paper."""
     def __init__(self, size: int) -> None:
         """
         :param size: The last dimension of the tensor you want to apply pos emb to.
@@ -73,6 +96,7 @@ class TimeFormer(nn.Module):
         self.out_size = out_size
         self.cached_mask = None
         # Learnable modules.
+        self.pe = PositionalEncoding1D(emb_size // 2)
         self.f = nn.GELU()
         self.drop = nn.Dropout(dropout, inplace=False)
         self.inp = nn.Linear(input_size, emb_size // 2)
@@ -84,7 +108,6 @@ class TimeFormer(nn.Module):
             batch_first=True,
             activation='gelu'
         )
-        self.pe = PositionalEncoding1D(emb_size)
         self.encoder = TransformerEncoder(
             encoder_layer=self.transblock,
             num_layers=depth, 
@@ -103,8 +126,8 @@ class TimeFormer(nn.Module):
         seq_len = input_seq.shape[1]
         diag_mask = self._generate_triangle_mask(seq_len)  # ATTENTION: 1 means the token WILL be masked, 0 means it WILL NOT.
         h = self.f(self.inp(input_seq)) # Create initial embeddigs.
-        h = torch.cat((h, self.pe(h)), dim=-1)  # Add positional embeddings.
-        # h = h + self.pe(h)
+        h = torch.cat((h, self.pe(h)), dim=-1)  # Append positional embeddings.
+        # h = h + self.pe(h)  # Add positional embeddings.
         h = self.encoder(h, diag_mask)  # Run transformer encoder.
         return self.out(h)
 
