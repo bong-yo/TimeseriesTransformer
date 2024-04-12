@@ -1,23 +1,25 @@
-from os.path import abspath, dirname
 from torch.utils.tensorboard import SummaryWriter
 import torch
-from src.utils import seed_everything, prepare_savedir, FileIO
-from src.data import ElectricProdDataset, DailyTemp
+import numpy as np
+from src.utils import seed_everything, prepare_savedir
+from src.data import DailyDehliClimate
 from src.modelling import ExampleGenerator, SupervisedTrainer
-from src.models.transformer import TimeFormer
+from src.models.time_trans.full_ts_trans import TimeFormer
 from src.visuals import DisplayPreds
 from src.config.mainconf import Config
+from src.utils import FileIO
 
 
 conf = Config()
-savedir = prepare_savedir(conf)
- # Laod data.
-train, dev, test = DailyTemp.load(
-    conf.datasets.daily_temperatures, train_perc=0.7, dev_perc=0.1
-)
-train_examples = ExampleGenerator.sample_seqs(train, 1000, conf.model.max_seq_len)
-dev_examples = ExampleGenerator.sample_seqs(dev, 200, conf.model.max_seq_len)
-test_examples = ExampleGenerator.sample_seqs(test, 400, conf.model.max_seq_len)
+savedir = prepare_savedir(conf, 'DailyDelhiClimate')
+# Laod data.
+train, dev, test = DailyDehliClimate.load(conf.datasets.dailydelhi_climate,
+                                          train_perc=0.8)
+train_examples = ExampleGenerator.sample_seqs(train, conf.model.max_seq_len)
+dev_examples = ExampleGenerator.sample_seqs(dev, conf.model.max_seq_len,
+                                            rand_shuffle=False)
+test_examples = ExampleGenerator.sample_seqs(test, conf.model.max_seq_len,
+                                             rand_shuffle=False)
 
 
 TRAIN = True
@@ -27,18 +29,22 @@ if TRAIN:
 
     # Model.
     model = TimeFormer(
-        input_size=conf.model.input_size,
+        past_values_size=conf.model.values_size,
+        time_feats_size=conf.model.time_feats_size,
         emb_size=conf.model.emb_size,
         n_att_heads=conf.model.n_att_heads,
         dim_feedforward=conf.model.dim_feedforward,
         depth=conf.model.depth,
         dropout=conf.training.p_dropout,
-        max_seq_len=conf.model.max_seq_len,
-        out_size=conf.model.out_size
+        out_size=conf.model.out_size,
+        attention_type=conf.model.attention_type
     )
 
     # Train.
-    trainer = SupervisedTrainer(conf.training.patience, conf.training.delta, conf.device)
+    trainer = SupervisedTrainer(conf.training.standardize,
+                                conf.training.differentiate,
+                                conf.training.patience, conf.training.delta,
+                                conf.device)
     model = trainer.train(
         model=model,
         data_train=train_examples,
@@ -49,23 +55,36 @@ if TRAIN:
         tb_logger=tb_logger
     )
 
-    # # Save.
-    # FileIO.write_json(conf.dict(), f'{savedir}/config.json')
-    # model.save(savedir)
+    # Save.
+    FileIO.write_json(conf.model_dump(), f'{savedir}/config.json')
+    model.save(savedir)
 
 TEST = True
 if TEST:
-    # # Load model.
-    # model1 = TimeFormer.load(savedir)
-    # configs = FileIO.read_json(f'{savedir}/config.json')
-    # Test.
-    trainer = SupervisedTrainer()
+    # Load model.
+    model = TimeFormer.load(savedir)
+    configs = FileIO.read_json(f'{savedir}/config.json')
+    trainer = SupervisedTrainer(standardize=configs['training']['standardize'],
+                                differentiate=configs['training']['differentiate'],
+                                device=conf.device)
 
     # Plot predicitons for one example.
-    ex = test_examples[0]
+    dates = [x.dates for x in test_examples]
+    inps = torch.stack([x.input_seq for x in test_examples])
+    targs = torch.stack([x.target_seq for x in test_examples])
     with torch.no_grad():
-        inps = ex.input_seq.unsqueeze(-1).unsqueeze(0)
-        preds = model(inps.to(conf.device))
-    DisplayPreds.plot(
-        inps.squeeze().tolist(), preds.squeeze().tolist(), ex.target_seq.tolist()
-    )
+        preds = trainer.pred_step(model, dates, inps)
+    loss = torch.sqrt(trainer.criterion(preds, targs))
+    print(f"Test loss: {loss}")
+    FileIO.write_json({'test_loss': loss.item()}, f'{savedir}/test_loss.json')
+
+    feats = ['meantemp', 'humidity', 'wind_speed', 'meanpressure']
+    for i in range(4):
+        feat = feats[i]
+        ps = preds[:, -1, i].cpu().numpy()
+        ts = targs[:, -1, i].cpu().numpy()
+        ds = np.array([str(x[-1])[:10] for x in dates])
+
+        DisplayPreds.plot(ds, ps, ts, feat)
+
+print("Done!")

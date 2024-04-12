@@ -5,7 +5,7 @@ import torch
 from src.utils import seed_everything, prepare_savedir, FileIO
 from src.data import ElectricProdDataset
 from src.modelling import ExampleGenerator, SupervisedTrainer
-from src.models.transformer import TimeFormer
+from src.models.timetrans.transformer import TimeFormer
 from src.visuals import DisplayPreds
 from src.config.mainconf import Config
 
