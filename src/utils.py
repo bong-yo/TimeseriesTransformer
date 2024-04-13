@@ -153,8 +153,9 @@ def seed_everything(seed: int, deterministic: bool = True) -> None:
 
 
 def prepare_savedir(config: Config, dataset: str) -> str:
-    name = 'emb{}-ff{}-nhead{}-depth{}-seqlen{}-batch{}_stnrd{}_diff{}'.format(
-        config.model.emb_size, config.model.dim_feedforward, config.model.n_att_heads,
+    name = '{}_emb{}-ff{}-nhead{}-depth{}-seqlen{}-batch{}_stnrd{}_diff{}'.format(
+        config.model.attention_type, config.model.emb_size,
+        config.model.dim_feedforward, config.model.n_att_heads,
         config.model.depth, config.model.max_seq_len, config.training.batch_size,
         config.training.standardize, config.training.differentiate
     )
