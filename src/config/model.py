@@ -12,5 +12,5 @@ class ModelConfig(BaseModel):
     depth: int = Field(6, description="Number of transformer blocks")
     max_seq_len: int = Field(14, description="Lengths of longest seq supported")
     out_size: int = Field(4, description="Dimension of output embeddings")
-    attention_type: Literal['standard', 'cross'] = Field('standard', description="Type of attention to use")
+    attention_type: Literal['standard', 'cross'] = Field('cross', description="Type of attention to use")
     saves: str = Field('model_saves')

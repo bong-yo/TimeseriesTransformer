@@ -81,7 +81,8 @@ class TimeFormer(nn.Module):
             h_values = self.add_pos_embs(h_values)
             h_temp = self.f(self.inp_temp(past_temp_features))
             h_temp = self.add_pos_embs(h_temp)
-            h = self.encoder(h_values, h_temp, mask=temporal_mask)[0]
+            h, att_weights, att1, att12 = \
+                self.encoder(h_values, h_temp, mask=temporal_mask)
         return self.out(h)
 
     def diag_mask(self, seq_len: int) -> LongTensor:
@@ -94,7 +95,7 @@ class TimeFormer(nn.Module):
         :return: LongTensor, diagonal mask of shape (seq_len, seq_len)
         """
         if self.cached_mask is None or self.cached_mask.shape[0] != seq_len:
-            self.cached_mask = torch.triu(torch.ones(seq_len, seq_len))
+            self.cached_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=0)
         return self.cached_mask
 
     def save(self, dirname: str) -> None:

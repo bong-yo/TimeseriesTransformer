@@ -90,7 +90,8 @@ class SupervisedTrainer:
         preds = model(inp_seq.to(self.device), temp_feats.to(self.device))
         # Revert pre-processing.
         if self.standardize:
-            preds = preds * stds.unsqueeze(1) + means.unsqueeze(1)
+            preds = preds * stds.unsqueeze(1).to(self.device) + \
+                means.unsqueeze(1).to(self.device)
         if self.differentiate:
             preds = prev_day + preds
         return preds

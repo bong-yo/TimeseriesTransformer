@@ -122,10 +122,10 @@ class MultiHeadCrossAttention(nn.Module):
         q12 = self.split_heads(q12)  # (B, H, S, D)
         k12 = self.split_heads(k12)  # (B, H, S, D)
 
-        attn_scores = torch.matmul(q1, k1.transpose(-1, -2))  # (B,H,S,S)
-        attn_scores2 = torch.matmul(q12, k12.transpose(-1, -2))  # (B,H,S,S)
+        attn_scores1 = torch.matmul(q1, k1.transpose(-1, -2))  # (B,H,S,S)
+        attn_scores12 = torch.matmul(q12, k12.transpose(-1, -2))  # (B,H,S,S)
         # Combine the two attention scores.
-        attn_scores = (attn_scores + attn_scores2)
+        attn_scores = (attn_scores1 + attn_scores12)
         # Add mask to the scaled tensor.
         if mask is not None:
             attn_scores += (mask * -1e9)
@@ -139,7 +139,7 @@ class MultiHeadCrossAttention(nn.Module):
         output_attn1 = self.dense1(concat_attention)  # (B, S, D)
         output_ff2 = self.dense2(concat_k12)
 
-        return output_attn1, output_ff2, attention_weights
+        return output_attn1, output_ff2, attention_weights, attn_scores1, attn_scores12
 
 
 class TransformerBlock(nn.Module):
@@ -213,7 +213,8 @@ class TransformerCrossBlock(nn.Module):
 
     def forward(self, x: Tensor, x2: Tensor, look_ahead_mask: Tensor):
         # Attention block.
-        x_attn, x2_ff, attn_weights = self.mhca(x, x2, look_ahead_mask)  # (B, S, D)
+        x_attn, x2_ff, attn_weights, att_scores1, att_scores12 = \
+            self.mhca(x, x2, look_ahead_mask)  # (B, S, D)
         x_attn = self.dropout1(x_attn)  # (B,S,D)
         x = self.layernorm1(x + x_attn)  # (B,S,D)
         # Feed forward block.
@@ -221,7 +222,7 @@ class TransformerCrossBlock(nn.Module):
         x_ff = self.linear2(self.dropout(x_ff))
         x_ff = self.dropout2(x_ff)
         output = self.layernorm2(x + x_ff)  # (B, S, D)
-        return output, x2_ff, attn_weights
+        return output, x2_ff, attn_weights, att_scores1, att_scores12
 
 
 class TransformerCrossEncoder(nn.Module):
@@ -237,8 +238,10 @@ class TransformerCrossEncoder(nn.Module):
             layer.init_weights()
 
     def forward(self, x: Tensor, x2: Tensor, mask: Tensor):
-        attn_weights = []
+        attn_weights, attn_scores1, attn_scores12 = [], [], []
         for layer in self.encoder_layers:
-            x, x2, attn_w = layer(x, x2, mask)
+            x, x2, attn_w, annt1, attn12 = layer(x, x2, mask)
             attn_weights.append(attn_w)
-        return x, attn_weights
+            attn_scores1.append(annt1)
+            attn_scores12.append(attn12)
+        return x, attn_weights, attn_scores1, attn_scores12

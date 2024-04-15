@@ -74,7 +74,7 @@ if TEST:
     targs = torch.stack([x.target_seq for x in test_examples])
     with torch.no_grad():
         preds = trainer.pred_step(model, dates, inps)
-    loss = torch.sqrt(trainer.criterion(preds, targs))
+    loss = torch.sqrt(trainer.criterion(preds, targs.to(conf.device)))
     print(f"Test loss: {loss}")
     FileIO.write_json({'test_loss': loss.item()}, f'{savedir}/test_loss.json')
 
