@@ -87,14 +87,15 @@ class SupervisedTrainer:
         if self.standardize:
             inp_seq, means, stds = standardize(inp_seq)
         # Forward.
-        preds = model(inp_seq.to(self.device), temp_feats.to(self.device))
+        preds, attn_weights, attn1, attn2 = \
+            model(inp_seq.to(self.device), temp_feats.to(self.device))
         # Revert pre-processing.
         if self.standardize:
             preds = preds * stds.unsqueeze(1).to(self.device) + \
                 means.unsqueeze(1).to(self.device)
         if self.differentiate:
             preds = prev_day + preds
-        return preds
+        return preds, attn_weights, attn1, attn2
 
     def train(self,
               model: TimeFormer,
@@ -121,7 +122,7 @@ class SupervisedTrainer:
             for dates, inp_seq, targs in Batcher.create_batches(data_train,
                                                                 batch_size):
                 optimizer.zero_grad()
-                preds = self.pred_step(model, dates, inp_seq)
+                preds = self.pred_step(model, dates, inp_seq)[0]
                 loss = torch.sqrt(self.criterion(preds, targs.to(self.device)))
                 if epoch > 0:  # First epoch keep untrained model for baseline performance.
                     loss.backward()
@@ -135,9 +136,11 @@ class SupervisedTrainer:
                 scheduler.step(rmse_eval)
             # Log into tensorboard the evaluation results and print.
             tb_logger.add_scalar('Loss/eval', rmse_eval, epoch)
-            logger.info(self.train_msg % (epoch, rmse_train, rmse_eval))
 
-            if not self.has_improved(rmse_eval, model):
+            keep_waiting, best = self.has_improved(rmse_eval, model)
+            logger.info(self.train_msg % (epoch, rmse_train, rmse_eval
+                                          ) + (" - Best!" if best else ""))
+            if not keep_waiting:
                 break
 
         # logger.debug(f'LogReg training finished! Best F1: {self.best_metric}')
@@ -149,22 +152,59 @@ class SupervisedTrainer:
         with torch.no_grad():
             for dates, inp_seq, targs in Batcher.create_batches(data_eval,
                                                                 size=100):
-                preds = self.pred_step(model, dates, inp_seq)
+                preds = self.pred_step(model, dates, inp_seq)[0]
                 rmse += torch.sqrt(self.criterion(preds, targs.to(self.device))).item()
                 n += 1
         return rmse / n
 
-    def has_improved(self, metric: float, model: TimeFormer):
+    def has_improved(self, metric: float, model: TimeFormer) -> tuple[bool, bool]:
         """Check if the 'Metric Of Reference' has improved in the last 'patience' steps,
         and save best model."""
         if metric == 0:
-            return True
+            return True, True
         if self.best_metric - metric > self.delta:  # Metric improved (more than delta).
             self.best_metric = metric
             self.best_model = deepcopy(model)
             self.patience_count = 0
-            return True
+            return True, True
         elif self.patience_count < self.patience:  # Metric didn't improve but still patience.
             self.patience_count += 1
-            return True
-        return False
+            return True, False
+        return False, False
+
+
+class GPTrainer:
+    def __init__(self, standardize: bool = False, differentiate: bool = False,
+                 patience: int = 5, delta: float = 0,
+                 device: str = 'cpu') -> None:
+        super(SupervisedTrainer, self).__init__()
+        self.standardize = standardize
+        self.differentiate = differentiate
+        self.patience = patience
+        self.delta = delta
+        self.patience_count = 0
+        self.best_metric = float("inf")
+        self.best_model = None
+        self.train_msg = "Epoch: %d | Train L: %.3f | Valid  L: %.3f"
+        self.device = device
+        self.criterion = MSELoss()
+
+    def pred_step(self, model: TimeFormer, dates: Tensor, inp_seq: Tensor) -> Tensor:
+        # Preprocess time feats, differential and standardise.
+        temp_feats = create_time_features(dates)
+        if self.differentiate:
+            prev_day = inp_seq.clone()
+            inp_seq = differentiate(inp_seq)
+        if self.standardize:
+            inp_seq, means, stds = standardize(inp_seq)
+        # Forward.
+        preds, attn_weights, attn1, attn2 = \
+            model(inp_seq.to(self.device), temp_feats.to(self.device))
+        # Revert pre-processing.
+        if self.standardize:
+            preds = preds * stds.unsqueeze(1).to(self.device) + \
+                means.unsqueeze(1).to(self.device)
+        if self.differentiate:
+            preds = prev_day + preds
+        return preds, attn_weights, attn1, attn2
+

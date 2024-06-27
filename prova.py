@@ -22,7 +22,7 @@ test_examples = ExampleGenerator.sample_seqs(test, conf.model.max_seq_len,
                                              rand_shuffle=False)
 
 
-TRAIN = True
+TRAIN = False
 if TRAIN:
     seed_everything(conf.seed)
     tb_logger = SummaryWriter(log_dir=f'{savedir}/tb-logs', comment="000")
@@ -73,10 +73,15 @@ if TEST:
     inps = torch.stack([x.input_seq for x in test_examples])
     targs = torch.stack([x.target_seq for x in test_examples])
     with torch.no_grad():
-        preds = trainer.pred_step(model, dates, inps)
+        preds, attn_weights, attn1, attn2 = \
+            trainer.pred_step(model, dates, inps)
     loss = torch.sqrt(trainer.criterion(preds, targs.to(conf.device)))
     print(f"Test loss: {loss}")
     FileIO.write_json({'test_loss': loss.item()}, f'{savedir}/test_loss.json')
+
+    # Plot attention weights.
+    DisplayPreds.plot_AttentionWeights(attn_weights, attn1, attn2,
+                                       f'{savedir}/attention_weights_heatmap.png')
 
     feats = ['meantemp', 'humidity', 'wind_speed', 'meanpressure']
     for i in range(4):
@@ -84,7 +89,6 @@ if TEST:
         ps = preds[:, -1, i].cpu().numpy()
         ts = targs[:, -1, i].cpu().numpy()
         ds = np.array([str(x[-1])[:10] for x in dates])
-
-        DisplayPreds.plot(ds, ps, ts, feat)
+        # DisplayPreds.plot_PredsVsTrues(ds, ps, ts, feat)
 
 print("Done!")

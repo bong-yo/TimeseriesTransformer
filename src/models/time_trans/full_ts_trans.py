@@ -19,6 +19,7 @@ class TimeFormer(nn.Module):
                  dropout: float,
                  out_size: int,
                  attention_type: Literal['standard', 'cross']) -> None:
+        '''Uses Multihead-Cross Attention to interpolate between two time series.'''
         super(TimeFormer, self).__init__()
         assert emb_size % 2 == 0
         assert attention_type in ['standard', 'cross']
@@ -58,24 +59,30 @@ class TimeFormer(nn.Module):
         )
         self.out = nn.Linear(emb_size, out_size)
 
-    def forward(self, inputs: Tensor, past_temp_features: Tensor):
+    def forward(self, inputs: Tensor, past_temp_features: Tensor
+                ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """
         :param past_values: tensor (batch_size, seq_len, n_val_feats) of
                             numerical past values to predict
         :param past_temp_features: tensor (batch_size, seq_len, n_temp_feats) of
                                    past temporal features
         :return: Transformer embeddings sequence of size (batch_size, seq_len,
-                 emb_size)
+                 emb_size);
+                 Attention weights of the encoder of shape (batch_size, n_heads,
+                 seq_len, seq_len);
+                 Cross-Attention weights of value-value part
+                 Cross-Attention weights of value-temporal_features  part
         """
         # Compute diagonal attention mask to prevent tokens to be bale to attend future
         # tokens in the time-series
         temporal_mask = self.diag_mask(inputs.shape[1]).to(inputs.device)
+        att1, att12 = None, None
         if self.attention_type == 'standard':
             if self.time_feats_size > 0:
                 inputs = torch.cat((inputs, past_temp_features), dim=-1)
             h = self.f(self.inp(inputs))  # Create initial embeddigs.
             h = self.add_pos_embs(h)
-            h = self.encoder(h, mask=temporal_mask)[0]  # Run transformer encoder.
+            h, att_weights = self.encoder(h, mask=temporal_mask)[0]  # Run transformer encoder.
         elif self.attention_type == 'cross':
             h_values = self.f(self.inp_values(inputs))
             h_values = self.add_pos_embs(h_values)
@@ -83,7 +90,7 @@ class TimeFormer(nn.Module):
             h_temp = self.add_pos_embs(h_temp)
             h, att_weights, att1, att12 = \
                 self.encoder(h_values, h_temp, mask=temporal_mask)
-        return self.out(h)
+        return self.out(h), att_weights, att1, att12
 
     def diag_mask(self, seq_len: int) -> LongTensor:
         """
@@ -95,7 +102,9 @@ class TimeFormer(nn.Module):
         :return: LongTensor, diagonal mask of shape (seq_len, seq_len)
         """
         if self.cached_mask is None or self.cached_mask.shape[0] != seq_len:
-            self.cached_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=0)
+            self.cached_mask = torch.triu(
+                torch.ones(seq_len, seq_len, dtype=torch.bool), diagonal=1
+            )
         return self.cached_mask
 
     def save(self, dirname: str) -> None:

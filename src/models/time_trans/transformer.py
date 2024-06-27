@@ -4,6 +4,7 @@ import torch
 from torch import Tensor, LongTensor
 import torch.nn as nn
 from torch.nn import TransformerEncoderLayer, TransformerEncoder
+from torch.nn.modules.transformer import MultiheadAttention
 
 
 class PositionalEncodingNaive(nn.Module):
